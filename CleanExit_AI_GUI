@@ -1,0 +1,290 @@
+import sys
+
+from PyQt5.QtWidgets import (
+    QApplication, QWidget, QLabel, QPushButton, QVBoxLayout,
+    QFileDialog, QMessageBox
+)
+from PyQt5.QtGui import QPixmap, QImage
+from PyQt5.QtCore import Qt
+import cv2
+import numpy as np
+import torch
+import torch.nn as nn
+from torchvision import models,transforms
+from pathlib import Path
+
+class CleanExit_AI(QWidget):
+    """
+    ExitGuard - 책상 청결 상태를 확인하는 PyQt GUI
+
+    기능:
+    1. 이미지 업로드
+    2. 1단계 분류 모델 (예: MobileNetV3)로 clean / messy 판별
+    3. messy일 경우 2단계 YOLO로 물체 탐지 후 bounding box 그려서 표시
+    """
+
+    def __init__(self):
+        super().__init__()
+
+        # 기본 윈도우 설정
+        self.setWindowTitle("CleanExit_AI - Desk Cleanliness Inspector")
+        self.setGeometry(300, 200, 500, 650)
+
+        # 이미지 표시 영역
+        self.image_label = QLabel("이미지를 업로드하세요")
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setFixedSize(450, 450)
+
+        # 버튼: 사진 업로드
+        self.btn_upload = QPushButton("사진 업로드")
+        self.btn_upload.clicked.connect(self.load_image)
+
+        # 버튼: 판단하기 (분류 → 필요 시 탐지)
+        self.btn_predict = QPushButton("판단하기")
+        self.btn_predict.clicked.connect(self.run_classifier)
+
+        # 레이아웃 설정
+        layout = QVBoxLayout()
+        layout.addWidget(self.image_label)
+        layout.addWidget(self.btn_upload)
+        layout.addWidget(self.btn_predict)
+        self.setLayout(layout)
+
+        # 현재 선택된 이미지 경로 저장
+        self.current_image_path = None
+
+
+        # 프로젝트 루트 기준 경로 계산(../CleanExit_AI)
+        self.base_dir = Path(__file__).resolve().parents[0]
+
+        # 디바이스 설정
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu" )
+
+        # 이미지 전처리 (MobileNet 입력용)
+        self.transform = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize((224,224)),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225],
+            ),
+        ])
+
+        self.class_names = ["clean", "messy"]
+
+        #  모델 로더 (지금은 placeholder, 실제 모델 로딩 코드로 교체 예정)
+        self.classifier_model = self.load_classifier_model()
+        self.yolo_model = self.load_yolo_model()
+
+    # -----------------------------
+    #  모델 로딩
+    # -----------------------------
+    def load_classifier_model(self):
+        """
+        1단계 분류 모델(MobileNetV3 등)을 로딩하는 함수.
+        checkpoints/mobilenet_baseline.pth 사용
+        """
+        try:
+            ckpt_path = self.base_dir / "checkpoints" / "mobilenet_baseline.pth"
+            print(f"분류 모델 체크포인트: {ckpt_path}")
+
+            # 학습시킬때 사용한 구조와 동일한 모델 구조
+            nc = 2
+            model = models.mobilenet_v3_large(
+                weights = models.MobileNet_V3_Large_Weights.IMAGENET1K_V1
+            )
+            model.classifier[3] = nn.Linear(model.classifier[3].in_features, nc)
+
+            state_dict = torch.load(ckpt_path, map_location='cpu')
+            model.load_state_dict(state_dict)
+
+            model.to(self.device)
+            model.eval()
+
+            print("MobileNetV3-Large classifier model loaded!")
+            return model
+
+        except Exception as e:
+            print(f"MobileNetV3-Large 로딩 실패: {e}")
+            return None
+
+
+    def load_yolo_model(self):
+        """
+        2단계 객체 탐지 모델(YOLO 등)을 로딩하는 함수.
+        지금은 placeholder로 None을 리턴하고, 추후 실제 모델 로딩 코드로 교체.
+        """
+        print("YOLO object detection model loaded (placeholder)")
+        return None
+
+    # -----------------------------
+    # 🎯 이미지 업로드
+    # -----------------------------
+    def load_image(self):
+        """
+        파일 선택 창을 띄워서 이미지를 선택하고,
+        QLabel 영역에 선택한 이미지를 미리보기로 띄움.
+        """
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "이미지 선택",
+            "",
+            "Image Files (*.png *.jpg *.jpeg)"
+        )
+
+        if file_path:
+            self.current_image_path = file_path
+            # 이미지 크기 조정해서 라벨에 표시
+            pixmap = QPixmap(file_path).scaled(
+                450, 450, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            self.image_label.setPixmap(pixmap)
+
+    # -----------------------------
+    #  1단계: MobileNet 분류
+    # -----------------------------
+    def classify_image(self, img_path: str) -> str:
+        """
+        1단계 분류 모델로 이미지의 청결 상태를 예측.
+        return 값은 "clean" 또는 "messy"
+
+        TODO:
+            - img_path로 이미지를 열어서 전처리
+            - self.classifier_model로 예측 수행
+            - 예측 결과를 문자열로 변환하여 리턴
+        """
+        if self.classifier_model is None:
+            QMessageBox.warning(self, "모델 오류", "분류 모델이 로드되지 않았습니다.")
+            return "messy"
+        img_bgr = cv2.imread(img_path)
+        if img_bgr is None:
+            QMessageBox.warning(self, "오류", "이미지를 불러올 수 없습니다.")
+            return "messy"
+
+        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        tensor = self.transform(img_rgb).unsqueeze(0).to(self.device)
+
+        with torch.no_grad():
+            logits = self.classifier_model(tensor)
+            probs = torch.softmax(logits, dim=1)[0].cpu().numpy()
+
+        idx = int(np.argmax(probs))
+        label = self.class_names[idx]
+        self.last_class_probs = probs
+
+        print(f"[Classifier] {label} (clean={probs[0]:.2f}, messy={probs[1]:.2f})")
+        return label
+
+    # -----------------------------
+    #  2단계: YOLO 탐지
+    # -----------------------------
+    def detect_objects(self, img_path: str):
+        """
+        2단계 탐지 모델(YOLO)로 책상 위 물체를 탐지하는 함수.
+
+        Args:
+            img_path (str): 입력 이미지 파일 경로
+
+        Returns:
+            list[tuple]: (x1, y1, x2, y2, label, confidence) 리스트
+
+        TODO:
+            - self.yolo_model(img_path) 형태로 실제 YOLO inference 수행
+            - 결과를 bounding box 좌표 / 라벨 / confidence로 파싱하여 리턴
+        """
+        print("Running YOLO detector ... (placeholder)")
+
+        QMessageBox.information(
+            self,
+            "알림",
+            "YOLO 탐지는 아직 구현되지 않았습니다."
+        )
+        return []
+
+    # -----------------------------
+    # 🎯 YOLO 박스를 이미지에 그리기
+    # -----------------------------
+    def draw_boxes(self, img_path: str, boxes):
+        """
+        YOLO에서 반환된 bounding box들을 원본 이미지 위에 그려서
+        그 결과 이미지를 GUI에 표시.
+
+        Args:
+            img_path (str): 원본 이미지 경로
+            boxes (list): (x1, y1, x2, y2, label, confidence) 리스트
+        """
+        img = cv2.imread(img_path)
+
+        if img is None:
+            QMessageBox.warning(self, "오류", "이미지를 불러올 수 없습니다.")
+            return
+
+        # bounding box 그리기
+        for (x1, y1, x2, y2, label, conf) in boxes:
+            # 사각형
+            cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            # 라벨 + confidence 텍스트
+            cv2.putText(
+                img,
+                f"{label} {conf:.2f}",
+                (x1, y1 - 10),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 255, 0),
+                2,
+            )
+
+        # OpenCV(BGR) → RGB → QImage → QPixmap 변환 후 라벨에 표시
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        h, w, ch = rgb.shape
+        qimg = QImage(rgb.data, w, h, w * ch, QImage.Format_RGB888)
+        pixmap = QPixmap.fromImage(qimg).scaled(
+            450, 450, Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
+        self.image_label.setPixmap(pixmap)
+
+    # -----------------------------
+    #  버튼 클릭 → 전체 파이프라인 실행
+    # -----------------------------
+    def run_classifier(self):
+        """
+        '판단하기' 버튼이 눌렸을 때 동작하는 메인 파이프라인.
+
+        1) 이미지 업로드 여부 확인
+        2) 1단계 분류 모델 실행 → clean / messy
+        3) clean이면: 팝업으로 clean 안내
+        4) messy이면:
+            - 팝업으로 messy 안내
+            - 2단계 YOLO 탐지 실행
+            - bounding box 그려서 화면에 표시
+        """
+        if not self.current_image_path:
+            QMessageBox.warning(self, "오류", "먼저 이미지를 업로드하세요.")
+            return
+
+        # 1) MobileNet 분류 실행
+        result = self.classify_image(self.current_image_path)
+
+        if result == "clean":
+            QMessageBox.information(self, "판단 결과", "✔ CLEAN 상태입니다")
+            return
+
+        # messy이면 YOLO 탐지 단계로 진행
+        QMessageBox.information(self, "판단 결과", "✖ MESSY → 물체 검출 시작 \n (YOLO 탐지는 추후 추가 예정)")
+
+
+        # 아직 추가 안됨
+        # # 2) YOLO 탐지 실행
+        # boxes = self.detect_objects(self.current_image_path)
+        #
+        # # 3) 탐지 결과를 이미지에 그려서 표시
+        # self.draw_boxes(self.current_image_path, boxes)
+
+
+if __name__ == "__main__":
+    # PyQt 애플리케이션 실행 엔트리 포인트
+    app = QApplication(sys.argv)
+    window = CleanExit_AI()
+    window.show()
+    sys.exit(app.exec_())
