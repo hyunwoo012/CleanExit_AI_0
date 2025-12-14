@@ -1,3 +1,51 @@
+# =====================
+# Python / IDE
+# =====================
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
 .idea/
 *.iml
 .DS_Store
+
+# =====================
+# Model weights / runs
+# =====================
+*.pt
+checkpoints/
+models/
+runs/
+yolo_runs/
+runs_cleanexit/
+src/checkpoints/
+
+# =====================
+# Data / Frames
+# =====================
+frames/
+frames_v1/
+frames_v2/
+origin_video/
+
+yolo_data/
+yolo_data-v1/
+yolo_data-v4/
+
+# keep config only
+!yolo_data-v4/data.yaml
+
+# =====================
+# Labeling artifacts
+# =====================
+auto_labeling_data/
+project-export/
+project-export-v1/
+auto_labels.json
+
+# =====================
+# Logs / experiment outputs
+# =====================
+*.log
+*.csv
+*.json
+!notes.json
